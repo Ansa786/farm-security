@@ -1,0 +1,18 @@
+# Auto normalize text files
+* text=auto
+
+# Ensure JS/React files always use LF in repo
+*.js     text
+*.jsx    text
+*.ts     text
+*.tsx    text
+*.css    text
+*.html   text
+*.json   text
+
+# Treat images/binaries correctly
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

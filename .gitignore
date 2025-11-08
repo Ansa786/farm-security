@@ -1,0 +1,10 @@
+# Node and build folders
+node_modules/
+dist/
+build/
+
+# Environment / local settings
+.env
+.env.local
+.vscode/
+.DS_Store
