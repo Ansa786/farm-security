@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Farm Security Notification Test</title>
+  <!-- OneSignal SDK -->
+  <script src="https://cdn.onesignal.com/sdks/OneSignalSDK.js" async=""></script>
+</head>
+<body>
+  <h2>Farm Security Test Portal</h2>
+  <button id="subscribe">Subscribe for Push Notification</button>
+  <div id="output"></div>
+
+  <script>
+    window.OneSignal = window.OneSignal || [];
+    OneSignal.push(function() {
+      OneSignal.init({
+        appId: "b6f2e79a-afa6-4b06-81db-86a6ed2053ba", // <-- Replace with your actual App ID from dashboard
+        notifyButton: { enable: true },
+        allowLocalhostAsSecureOrigin: true // Enables HTTP for localhost
+      });
+
+      document.getElementById('subscribe').onclick = function() {
+        OneSignal.registerForPushNotifications();
+      };
+
+      // Listen for subscription and show Player ID
+      OneSignal.on('subscriptionChange', function(isSubscribed) {
+        if (isSubscribed) {
+          OneSignal.getUserId().then(function(playerId) {
+            document.getElementById('output').textContent = "Subscribed! Player ID: " + playerId;
+          });
+        } else {
+          document.getElementById('output').textContent = "Not Subscribed";
+        }
+      });
+    });
+  </script>
+</body>
+</html>
