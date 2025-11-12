@@ -6,7 +6,8 @@ import threading
 import time
 
 # Configuration
-UPLOADS_DIR = "farm_security_backend/uploads"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 CLIP_DURATION_SECONDS = 120 # 2 minutes
 FPS = 15 # Target FPS for recording
 
@@ -96,3 +97,13 @@ class VideoHandler:
 
 # Global instance
 video_handler = VideoHandler()
+
+# For backward compatibility with detection.py (if needed)
+def get_latest_frame(camera_ip: str = None):
+    """
+    Get the latest frame from the video handler buffer.
+    Note: This is a simplified version - the actual frame comes from camera.py
+    """
+    # This function is not used in the current implementation
+    # Frames are handled directly in camera.py
+    return None

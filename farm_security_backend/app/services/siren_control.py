@@ -1,98 +1,58 @@
-import cv2
-import numpy as np
+# app/services/siren_control.py
 import os
-import datetime
-import threading
-import time
+import requests
+from typing import Optional
 
-# Configuration
-UPLOADS_DIR = "farm_security_backend/uploads"
-CLIP_DURATION_SECONDS = 120 # 2 minutes
-FPS = 15 # Target FPS for recording
+# Mock siren control - can be replaced with GPIO/relay control or MQTT
+SIREN_STATE = False
+SIREN_LOCK = False  # Prevent multiple simultaneous triggers
 
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-
-class VideoHandler:
-    """Manages capturing and saving video clips."""
+def trigger_siren(state: str) -> bool:
+    """
+    Triggers the siren ON or OFF.
+    For demo: returns True (mock success).
+    For production: implement GPIO/relay control or MQTT publish.
+    """
+    global SIREN_STATE, SIREN_LOCK
     
-    def __init__(self):
-        self._is_recording = False
-        self._frame_buffer = [] # Buffer for storing pre-event and current frames
-        self._lock = threading.Lock()
-        
-    def start_recording(self, detection_type: str):
-        """Starts a new recording thread."""
-        with self._lock:
-            if self._is_recording:
-                return False
-            
-            self._is_recording = True
-            
-            # Start the non-blocking recording thread
-            threading.Thread(
-                target=self._record_clip, 
-                args=(detection_type,),
-                daemon=True # Daemon thread so it closes when main app closes
-            ).start()
-            print(f"Started 2-minute recording for {detection_type} event.")
+    if SIREN_LOCK:
+        return False
+    
+    SIREN_LOCK = True
+    
+    try:
+        if state.upper() == "ON":
+            SIREN_STATE = True
+            print("🔊 SIREN ACTIVATED")
+            # TODO: Add GPIO/relay control here
+            # GPIO.output(SIREN_PIN, GPIO.HIGH)
+            # OR publish MQTT message to ESP32
             return True
+        elif state.upper() == "OFF":
+            SIREN_STATE = False
+            print("🔇 SIREN DEACTIVATED")
+            # TODO: Add GPIO/relay control here
+            # GPIO.output(SIREN_PIN, GPIO.LOW)
+            return True
+        else:
+            return False
+    finally:
+        SIREN_LOCK = False
 
-    def add_frame(self, frame: np.ndarray):
-        """Adds a frame to the buffer/queue."""
-        # Always maintain a small buffer (e.g., 5 seconds of pre-event footage)
-        PRE_EVENT_BUFFER_SIZE = FPS * 5 
-        
-        with self._lock:
-            self._frame_buffer.append(frame.copy())
-            
-            # Trim buffer if not recording
-            if not self._is_recording and len(self._frame_buffer) > PRE_EVENT_BUFFER_SIZE:
-                self._frame_buffer.pop(0)
+def get_siren_state() -> bool:
+    """Returns current siren state."""
+    return SIREN_STATE
 
-    def _record_clip(self, detection_type: str):
-        """Worker function for the recording thread."""
-        
-        if not self._frame_buffer:
-            self._is_recording = False
-            return
-            
-        # 1. Setup Writer
-        height, width, _ = self._frame_buffer[0].shape
-        filename = f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{detection_type}.avi"
-        filepath = os.path.join(UPLOADS_DIR, filename)
-        
-        # XVID codec for AVI format
-        fourcc = cv2.VideoWriter_fourcc(*'XVID') 
-        writer = cv2.VideoWriter(filepath, fourcc, FPS, (width, height))
-        
-        start_time = time.time()
-        
-        # 2. Write Buffered Frames (Pre-event footage)
-        with self._lock:
-            frames_to_write = self._frame_buffer[:] # Copy all buffered frames
-            self._frame_buffer.clear() # Clear for new live frames
-            
-        for frame in frames_to_write:
-            writer.write(frame)
-
-        # 3. Write Live Frames
-        while (time.time() - start_time) < CLIP_DURATION_SECONDS:
-            with self._lock:
-                if self._frame_buffer:
-                    frame = self._frame_buffer.pop(0) # Use frames added by add_frame
-                else:
-                    frame = None
-            
-            if frame is not None:
-                writer.write(frame)
-            else:
-                time.sleep(1/FPS) # Wait for a new frame
-                
-        # 4. Finalize
-        writer.release()
-        with self._lock:
-            self._is_recording = False
-        print(f"Finished recording: {filepath}")
+class SirenController:
+    """Wrapper class for siren control."""
+    
+    def toggle_siren(self, state: str) -> bool:
+        """Toggle siren ON or OFF."""
+        return trigger_siren(state)
+    
+    def get_state(self) -> bool:
+        """Get current siren state."""
+        return get_siren_state()
 
 # Global instance
-video_handler = VideoHandler()
+siren_controller = SirenController()

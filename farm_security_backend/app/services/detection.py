@@ -1,56 +1,117 @@
-import numpy as np
+# app/services/detection.py
+import os
+import time
+from threading import Timer, Lock
 from ultralytics import YOLO
-from typing import List, Dict, Any
+import cv2
+import numpy as np
+from datetime import datetime
+from app.services.siren_control import trigger_siren
+from app.services.push_notification import send_onesignal_notification
+from app.database import SessionLocal
+from app.models.event import DetectionEventDB
 
-# Define the target classes for farm security (ensure these match your model's classes)
-TARGET_CLASSES = ['human', 'elephant', 'monkey', 'cow']
+# --- Global System State ---
+SYSTEM_ACTIVE = True
+SYSTEM_LOCK = Lock()
+MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'models', 'best.pt')
+TIME_OFF = int(os.getenv('SYSTEM_OFF_DURATION_MINUTES', 30)) * 60
 
-class YoloDetector:
-    """Handles loading the YOLOv8 model and running inference."""
+# Load YOLOv8 Model (It's safe to load globally)
+model = None
+try:
+    if os.path.exists(MODEL_PATH):
+        model = YOLO(MODEL_PATH)
+        print(f"✅ YOLOv8 Model Loaded from {MODEL_PATH}")
+    else:
+        print(f"⚠️  WARNING: Model file not found at {MODEL_PATH}. Detection will be disabled.")
+except Exception as e:
+    print(f"❌ CRITICAL: Failed to load YOLOv8 model: {e}")
 
-    def __init__(self, model_path: str = "./models/best.pt", confidence_threshold: float = 0.5):
-        """Initializes the YOLO model with your custom weights.
-        
-        NOTE: You must create a 'models' directory inside farm_security_backend
-        and place your trained weights file ('best.pt' or similar) there.
-        """
-        self.model = None
-        try:
-            # We assume your best trained model is named 'best.pt'
-            self.model = YOLO(model_path)
-            print(f"YOLOv8 model loaded from {model_path}")
-            self.class_names = self.model.names 
-        except Exception as e:
-            print(f"CRITICAL ERROR: Failed to load YOLO model at {model_path}. Detection will be disabled. {e}")
-            self.class_names = {} # Fallback
-            
-        self.conf_thresh = confidence_threshold
+def auto_reactivate_system():
+    """5. Auto-reactivation after 30 min."""
+    global SYSTEM_ACTIVE
+    with SYSTEM_LOCK:
+        SYSTEM_ACTIVE = True
+    print("\n\n*** SYSTEM AUTO-REACTIVATED ***\n\n")
 
-    def run_detection(self, frame: np.ndarray) -> List[Dict[str, Any]]:
-        """Performs object detection on a single frame."""
-        if self.model is None:
-            return []
+def set_system_state(is_active: bool):
+    """5. Endpoint to turn security system ON/OFF."""
+    global SYSTEM_ACTIVE
+    with SYSTEM_LOCK:
+        SYSTEM_ACTIVE = is_active
+    
+    if not is_active:
+        print(f"*** SYSTEM DEACTIVATED for {TIME_OFF // 60} minutes ***")
+        # Start the auto-reactivation timer
+        Timer(TIME_OFF, auto_reactivate_system).start()
+    else:
+        print("*** SYSTEM ACTIVATED ***")
+    
+    return SYSTEM_ACTIVE
 
-        # Run inference using the loaded YOLO model
-        results = self.model.predict(frame, conf=self.conf_thresh, verbose=False)
+def get_system_state():
+    """Get current system state."""
+    with SYSTEM_LOCK:
+        return SYSTEM_ACTIVE
+
+def run_detection(frame: np.ndarray) -> list:
+    """
+    Run YOLOv8 detection on a frame.
+    Returns list of detections with 'label' and 'confidence' keys.
+    """
+    if model is None:
+        return []
+    
+    try:
+        results = model(frame, verbose=False)
         detections = []
         
-        # Process results
-        for result in results:
-            for box in result.boxes:
-                class_id = int(box.cls[0])
-                label = self.class_names.get(class_id, "unknown")
+        if results and len(results) > 0 and results[0].boxes is not None and len(results[0].boxes) > 0:
+            for box in results[0].boxes:
+                class_id = int(box.cls.item())
+                confidence = float(box.conf.item())
+                label = model.names[class_id]
                 
-                # Check if the detected object is a target threat and meets confidence threshold
-                if label in TARGET_CLASSES and float(box.conf[0]) >= self.conf_thresh:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                # Only return detections with confidence > 0.5
+                if confidence > 0.5:
                     detections.append({
-                        "label": label,
-                        "confidence": float(box.conf[0]),
-                        "bbox": [x1, y1, x2, y2]
+                        'label': label,
+                        'confidence': confidence,
+                        'class_id': class_id
                     })
         
         return detections
+    except Exception as e:
+        print(f"Detection error: {e}")
+        return []
 
-# Global instance for use in routes
-detector = YoloDetector()
+def log_detection_event(detection_type: str, siren_activated: bool, notified: bool, video_filename: str = None):
+    """Log a detection event to the database."""
+    try:
+        db = SessionLocal()
+        try:
+            event = DetectionEventDB(
+                timestamp=datetime.now(),
+                device_id="ESP32-CAM-01",
+                detection_type=detection_type,
+                video_filename=video_filename,
+                siren_activated=siren_activated,
+                notified=notified,
+                notification_type="push" if notified else None
+            )
+            db.add(event)
+            db.commit()
+            db.refresh(event)
+            print(f"✅ Event logged: {detection_type} at {event.timestamp}")
+            return event.id
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"❌ Error logging event: {e}")
+        return None
+
+# For backward compatibility
+detector = type('Detector', (), {
+    'run_detection': run_detection
+})()
