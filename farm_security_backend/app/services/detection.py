@@ -111,7 +111,10 @@ def log_detection_event(detection_type: str, siren_activated: bool, notified: bo
         print(f"❌ Error logging event: {e}")
         return None
 
-# For backward compatibility
-detector = type('Detector', (), {
-    'run_detection': run_detection
-})()
+# For backward compatibility, provide a detector object with run_detection as an instance method
+class Detector:
+    def run_detection(self, frame: np.ndarray) -> list:
+        """Wrapper method that calls the module-level run_detection function."""
+        return run_detection(frame)
+
+detector = Detector()

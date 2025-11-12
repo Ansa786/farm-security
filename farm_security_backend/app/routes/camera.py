@@ -98,7 +98,15 @@ def video_processing_loop():
         frame_count += 1
         if frame_count % FRAME_SKIP == 0:
             # --- CORE DETECTION CALL ---
-            detections = detector.run_detection(frame)
+            # Fix: YOLO detector.run() expects source, conf, etc. — not frame as positional arg
+            # If detector is a YOLO model, call it directly or use .predict()
+            try:
+                results = detector(frame, conf=0.5)  # or detector.predict(frame, conf=0.5)
+            except TypeError:
+                # Fallback: detector might be a wrapper; try .run_detection(frame)
+                results = detector.run_detection([frame])
+            
+            detections = results[0] if results else None
             
             if detections:
                 detection_type = detections[0]['label']
@@ -172,7 +180,16 @@ async def get_stream_status():
 @router.get("/live_feed")
 async def live_feed():
     """Live feed endpoint for streaming camera video."""
+    headers = {
+        # Prevent buffering/caching so MJPEG renders continuously
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+        "Access-Control-Allow-Origin": "*",
+    }
     return StreamingResponse(
         generate_frames(),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers=headers
     )
