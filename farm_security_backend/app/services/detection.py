@@ -73,20 +73,28 @@ def run_detection(frame: np.ndarray) -> list:
                 confidence = float(box.conf.item())
                 label = model.names[class_id]
                 
-                # Only return detections with confidence > 0.5
-                if confidence > 0.5:
-                    detections.append({
-                        'label': label,
-                        'confidence': confidence,
-                        'class_id': class_id
-                    })
+                # Only return detections with confidence > 0.7 (increased threshold to reduce false positives)
+                # Filter out common false positives - adjust class names based on your model
+                if confidence > 0.7:
+                    # Filter: only allow specific threat classes (human, elephant, etc.)
+                    # Exclude background/irrelevant classes if your model has them
+                    allowed_classes = ['human', 'person', 'elephant', 'monkey', 'animal']  # Add your actual class names
+                    label_lower = label.lower()
+                    if any(allowed in label_lower for allowed in allowed_classes):
+                        detections.append({
+                            'label': label,
+                            'confidence': confidence,
+                            'class_id': class_id
+                        })
+                    else:
+                        print(f"⚠️  Filtered out detection: {label} (confidence: {confidence:.2f}) - not in allowed classes")
         
         return detections
     except Exception as e:
         print(f"Detection error: {e}")
         return []
 
-def log_detection_event(detection_type: str, siren_activated: bool, notified: bool, video_filename: str = None):
+def log_detection_event(detection_type: str, siren_activated: bool, notified: bool, video_filename: str = None, confidence: float = None):
     """Log a detection event to the database."""
     try:
         db = SessionLocal()
@@ -98,7 +106,7 @@ def log_detection_event(detection_type: str, siren_activated: bool, notified: bo
                 video_filename=video_filename,
                 siren_activated=siren_activated,
                 notified=notified,
-                notification_type="push" if notified else None
+                confidence=confidence
             )
             db.add(event)
             db.commit()

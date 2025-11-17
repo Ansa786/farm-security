@@ -47,7 +47,7 @@ def db_to_pydantic(db_event: DetectionEventDB) -> DetectionEvent:
         video_filename=db_event.video_filename,
         siren_activated=db_event.siren_activated,
         notified=db_event.notified,
-        notification_type=db_event.notification_type
+        confidence=getattr(db_event, 'confidence', None)
     )
 
 # CREATE event
@@ -60,7 +60,7 @@ def create_detection_event(event: DetectionEvent, db: Session = Depends(get_db))
         video_filename=event.video_filename,
         siren_activated=event.siren_activated,
         notified=event.notified,
-        notification_type=event.notification_type
+        confidence=getattr(event, 'confidence', None)
     )
     db.add(db_event)
     db.commit()

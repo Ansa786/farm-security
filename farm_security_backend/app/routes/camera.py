@@ -15,9 +15,10 @@ router = APIRouter(prefix="/camera", tags=["camera"])
 
 # NOTE: Update this URL to match the actual IP of your ESP32-CAM
 # Prefer env override. Typical ESP32 stream path is http://<ip>:81/stream
+# If stream doesn't work, try http://<ip>/stream or check ESP32 serial output for actual port
 ESP32_CAM_STREAM_URL = os.getenv("ESP32_CAM_STREAM_URL", "http://192.168.43.77:81/stream")
 ESP32_CAM_SNAPSHOT_URL = os.getenv("ESP32_CAM_SNAPSHOT_URL", "http://192.168.43.77/capture")
-FRAME_SKIP = 5  # Run detection every 5 frames (to save CPU/GPU resources)
+FRAME_SKIP = 3  # Run detection every 3 frames (to save CPU/GPU resources)
 
 # Global video capture (will be initialized in processing loop)
 cap = None
@@ -25,15 +26,43 @@ cap_lock = threading.Lock()
 latest_frame = None
 frame_lock = threading.Lock()
 
+# Detection cooldown to prevent spam notifications
+last_detection_time = 0
+DETECTION_COOLDOWN = 30  # seconds between detections of the same type
+last_detection_type = None
+cooldown_lock = threading.Lock()
+
 def get_camera_capture():
     """Get or create video capture object."""
     global cap
     with cap_lock:
         if cap is None or not cap.isOpened():
-            cap = cv2.VideoCapture(ESP32_CAM_STREAM_URL)
+            # Try opening with FFMPEG backend and tune timeouts/buffer to avoid long blocking reads
+            try:
+                cap = cv2.VideoCapture(ESP32_CAM_STREAM_URL, cv2.CAP_FFMPEG)
+            except Exception:
+                cap = cv2.VideoCapture(ESP32_CAM_STREAM_URL)
+
+            # Try to reduce buffering and set open/read timeouts if supported by OpenCV build
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            # Some OpenCV versions expose timeouts (milliseconds). Ignore if unsupported.
+            try:
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            except Exception:
+                pass
+            try:
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+            except Exception:
+                pass
+
             if not cap.isOpened():
                 print(f"⚠️  WARNING: Failed to connect to camera stream at {ESP32_CAM_STREAM_URL}")
                 return None
+            else:
+                print(f"🔌 Connected to camera stream at {ESP32_CAM_STREAM_URL} (buffer=1, timeouts=5s if supported)")
         return cap
 
 def try_read_snapshot() -> np.ndarray | None:
@@ -54,7 +83,7 @@ def try_read_snapshot() -> np.ndarray | None:
 
 def video_processing_loop():
     """The main background loop for running detection and triggering actions."""
-    global latest_frame
+    global latest_frame, cap, last_detection_time, last_detection_type
     
     frame_count = 0
     print(f"🎥 Video processing loop starting... (Stream URL: {ESP32_CAM_STREAM_URL} | Snapshot URL: {ESP32_CAM_SNAPSHOT_URL})")
@@ -98,47 +127,63 @@ def video_processing_loop():
         frame_count += 1
         if frame_count % FRAME_SKIP == 0:
             # --- CORE DETECTION CALL ---
-            # Fix: YOLO detector.run() expects source, conf, etc. — not frame as positional arg
-            # If detector is a YOLO model, call it directly or use .predict()
+            # Run YOLO detection on the frame
             try:
-                results = detector(frame, conf=0.5)  # or detector.predict(frame, conf=0.5)
-            except TypeError:
-                # Fallback: detector might be a wrapper; try .run_detection(frame)
-                results = detector.run_detection([frame])
+                detections = detector.run_detection(frame)
+            except Exception as e:
+                print(f"⚠️  Detection error: {e}")
+                detections = []
             
-            detections = results[0] if results else None
-            
-            if detections:
+            if detections and len(detections) > 0:
                 detection_type = detections[0]['label']
-                print(f"🚨 ALERT! Threat Detected: {detection_type} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                confidence = detections[0].get('confidence', 0.0)
+                current_time = time.time()
                 
-                # A. Start recording (will only start if not already recording)
-                video_handler.start_recording(detection_type)
+                # Check cooldown - prevent spam notifications for same detection type
+                with cooldown_lock:
+                    should_alert = (last_detection_type != detection_type or 
+                                  current_time - last_detection_time >= DETECTION_COOLDOWN)
                 
-                # B. Trigger Siren (AI-triggered)
-                siren_success = siren_controller.toggle_siren("ON")
-                
-                # C. Send Notification
-                notification_success = send_onesignal_notification(
-                    title="🚨 Intrusion Alert!",
-                    message=f"{detection_type.capitalize()} detected on the farm."
-                )
-                
-                # D. Log event to database
-                video_filename = None  # Will be set by video_handler if recording succeeds
-                log_detection_event(
-                    detection_type=detection_type,
-                    siren_activated=siren_success,
-                    notified=notification_success,
-                    video_filename=video_filename
-                )
-                
-                # Auto-turn off siren after 10 seconds
-                def auto_siren_off():
-                    time.sleep(10)
-                    siren_controller.toggle_siren("OFF")
-                
-                threading.Thread(target=auto_siren_off, daemon=True).start()
+                if not should_alert:
+                    # Still in cooldown, skip notification but log detection
+                    print(f"👁️  Detection: {detection_type} (confidence: {confidence:.2f}) - Cooldown active")
+                else:
+                    # New detection or cooldown expired - trigger alert
+                    print(f"🚨 ALERT! Threat Detected: {detection_type} (confidence: {confidence:.2f}) at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    # Update cooldown tracking
+                    with cooldown_lock:
+                        last_detection_time = current_time
+                        last_detection_type = detection_type
+                    
+                    # A. Start recording (will only start if not already recording)
+                    video_handler.start_recording(detection_type)
+                    
+                    # B. Trigger Siren (AI-triggered)
+                    siren_success = siren_controller.toggle_siren("ON")
+                    
+                    # C. Send Notification
+                    notification_success = send_onesignal_notification(
+                        title="🚨 Intrusion Alert!",
+                        message="ALERT INTRUSION HAS BEEN DETECTED, requesting for immediate user action"
+                    )
+                    
+                    # D. Log event to database
+                    video_filename = None  # Will be set by video_handler if recording succeeds
+                    log_detection_event(
+                        detection_type=detection_type,
+                        siren_activated=siren_success,
+                        notified=notification_success,
+                        video_filename=video_filename,
+                        confidence=confidence
+                    )
+                    
+                    # Auto-turn off siren after 60 seconds
+                    def auto_siren_off():
+                        time.sleep(60)
+                        siren_controller.toggle_siren("OFF")
+                    
+                    threading.Thread(target=auto_siren_off, daemon=True).start()
             
             frame_count = 0
         

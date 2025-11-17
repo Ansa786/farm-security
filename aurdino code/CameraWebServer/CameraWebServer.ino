@@ -10,8 +10,8 @@
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "Samsung";
-const char *password = "12345678";
+const char *ssid = "R";
+const char *password = "123456789";
 
 void startCameraServer();
 void setupLedFlash(int pin);
@@ -101,6 +101,11 @@ void setup() {
 #if defined(LED_GPIO_NUM)
   setupLedFlash(LED_GPIO_NUM);
 #endif
+
+  // Initialize Siren GPIO pin (GPIO 2 for AI Thinker)
+  pinMode(2, OUTPUT);
+  digitalWrite(2, LOW);
+  Serial.println("Siren GPIO initialized on pin 2");
 
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);

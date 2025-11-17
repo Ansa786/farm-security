@@ -19,6 +19,7 @@
 #include "esp32-hal-ledc.h"
 #include "sdkconfig.h"
 #include "camera_index.h"
+#include <Arduino.h>
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
@@ -86,6 +87,10 @@ int led_duty = 0;
 bool isStreaming = false;
 
 #endif
+
+// Siren control setup
+#define SIREN_GPIO_PIN           2   // GPIO pin for siren/relay control (change if needed)
+bool siren_state = false;
 
 typedef struct {
   httpd_req_t *req;
@@ -877,6 +882,44 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
   return httpd_resp_send(req, NULL, 0);
 }
 
+// Siren control handler - called by backend when intrusion detected
+static esp_err_t siren_handler(httpd_req_t *req) {
+  char *buf = NULL;
+  char state[8];
+  
+  // Parse GET request: /siren?state=ON or /siren?state=OFF
+  if (parse_get(req, &buf) != ESP_OK) {
+    return ESP_FAIL;
+  }
+  
+  if (httpd_query_key_value(buf, "state", state, sizeof(state)) != ESP_OK) {
+    free(buf);
+    httpd_resp_send_404(req);
+    return ESP_FAIL;
+  }
+  free(buf);
+  
+  // Control siren GPIO pin
+  if (strcmp(state, "ON") == 0 || strcmp(state, "on") == 0) {
+    // turn siren on
+    digitalWrite(SIREN_GPIO_PIN, HIGH);
+    siren_state = true;
+    log_i("SIREN: ON");
+  } else if (strcmp(state, "OFF") == 0 || strcmp(state, "off") == 0) {
+    // turn siren off
+    digitalWrite(SIREN_GPIO_PIN, LOW);
+    siren_state = false;
+    log_i("SIREN: OFF");
+  } else {
+    log_e("Invalid siren state: %s", state);
+    httpd_resp_send_404(req);
+    return ESP_FAIL;
+  }
+  
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, NULL, 0);
+}
+
 static int print_reg(char *p, sensor_t *s, uint16_t reg, uint32_t mask) {
   return sprintf(p, "\"0x%x\":%u,", reg, s->get_reg(s, reg, mask));
 }
@@ -1287,6 +1330,19 @@ void startCameraServer() {
 #endif
   };
 
+  httpd_uri_t siren_uri = {
+    .uri = "/siren",
+    .method = HTTP_GET,
+    .handler = siren_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
   ra_filter_init(&ra_filter, 20);
 
 #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
@@ -1308,6 +1364,7 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &greg_uri);
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
+    httpd_register_uri_handler(camera_httpd, &siren_uri);
   }
 
   config.server_port += 1;

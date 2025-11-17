@@ -2,16 +2,19 @@
 import os
 import requests
 from typing import Optional
+from dotenv import load_dotenv
 
-# Mock siren control - can be replaced with GPIO/relay control or MQTT
+load_dotenv()
+
+# ESP32-CAM IP address (same as camera stream)
+ESP32_CAM_IP = os.getenv("ESP32_CAM_IP", "10.18.81.133")  # Update to match your ESP32 IP
 SIREN_STATE = False
 SIREN_LOCK = False  # Prevent multiple simultaneous triggers
 
 def trigger_siren(state: str) -> bool:
     """
-    Triggers the siren ON or OFF.
-    For demo: returns True (mock success).
-    For production: implement GPIO/relay control or MQTT publish.
+    Triggers the siren ON or OFF by sending HTTP request to ESP32.
+    ESP32 controls GPIO pin 2 (can be changed in Arduino code).
     """
     global SIREN_STATE, SIREN_LOCK
     
@@ -21,20 +24,25 @@ def trigger_siren(state: str) -> bool:
     SIREN_LOCK = True
     
     try:
-        if state.upper() == "ON":
-            SIREN_STATE = True
-            print("🔊 SIREN ACTIVATED")
-            # TODO: Add GPIO/relay control here
-            # GPIO.output(SIREN_PIN, GPIO.HIGH)
-            # OR publish MQTT message to ESP32
-            return True
-        elif state.upper() == "OFF":
-            SIREN_STATE = False
-            print("🔇 SIREN DEACTIVATED")
-            # TODO: Add GPIO/relay control here
-            # GPIO.output(SIREN_PIN, GPIO.LOW)
-            return True
-        else:
+        # Send HTTP GET request to ESP32 siren endpoint
+        url = f"http://{ESP32_CAM_IP}/siren?state={state.upper()}"
+        
+        try:
+            response = requests.get(url, timeout=2)
+            if response.status_code == 200:
+                SIREN_STATE = (state.upper() == "ON")
+                if state.upper() == "ON":
+                    print(f"🔊 SIREN ACTIVATED via ESP32 (GPIO 2)")
+                else:
+                    print(f"🔇 SIREN DEACTIVATED via ESP32")
+                return True
+            else:
+                print(f"⚠️  Siren control failed: HTTP {response.status_code}")
+                return False
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️  Failed to control siren on ESP32: {e}")
+            # Fallback: still update state for logging
+            SIREN_STATE = (state.upper() == "ON")
             return False
     finally:
         SIREN_LOCK = False
