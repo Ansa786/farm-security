@@ -41,13 +41,39 @@ export default function Alerts() {
           <div className="text-sm text-white/60">
             {alerts.length} alert{alerts.length !== 1 ? 's' : ''} found
           </div>
-          <button 
-            onClick={loadAlerts}
-            disabled={loading}
-            className="text-sm text-white/80 hover:text-white px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 disabled:opacity-50"
-          >
-            {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={loadAlerts}
+              disabled={loading}
+              className="text-sm text-white/80 hover:text-white px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 disabled:opacity-50"
+            >
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+            <button 
+              onClick={async () => {
+                if (!confirm('Are you sure you want to clear all detection logs? This cannot be undone.')) {
+                  return
+                }
+                try {
+                  const { apiBaseUrl } = await import('../store/useStore').then(m => m.useSettings.getState())
+                  const response = await fetch(`${apiBaseUrl}/api/events/clear`, { method: 'DELETE' })
+                  if (response.ok) {
+                    setAlerts([])
+                    alert('✅ All logs cleared successfully!')
+                  } else {
+                    alert('❌ Failed to clear logs')
+                  }
+                } catch (error) {
+                  console.error('Error clearing logs:', error)
+                  alert('❌ Error: ' + error.message)
+                }
+              }}
+              disabled={loading || alerts.length === 0}
+              className="text-sm text-red-400 hover:text-red-300 px-3 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Clear All
+            </button>
+          </div>
         </div>
         {loading && <div className="text-white/80">Loading alerts...</div>}
         {error && (

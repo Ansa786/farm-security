@@ -1,7 +1,14 @@
+from dotenv import load_dotenv
+
+# Load environment variables from .env file FIRST
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import threading
+import os
 from app.database import engine, Base
 
 # Create database tables
@@ -77,9 +84,15 @@ async def get_alerts_compat(limit: int = 100):
                 "device": e.device_id,
                 "siren": e.siren_activated,
                 "notified": e.notified,
-                "video": e.video_filename
+                "video": e.video_filename,
+                "confidence": e.confidence if hasattr(e, 'confidence') else None
             })
         return alerts
+    except Exception as ex:
+        print(f"Error in /alerts endpoint: {ex}")
+        import traceback
+        traceback.print_exc()
+        return []
     finally:
         db.close()
 

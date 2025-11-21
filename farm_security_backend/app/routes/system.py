@@ -15,9 +15,28 @@ class SirenStateRequest(BaseModel):
 @router.get("/status")
 async def get_status():
     """Returns the current security system status."""
+    # Import here to avoid circular imports
+    from app.routes.camera import get_camera_connection_status
+    
+    system_active = get_system_state()
+    camera_connected = get_camera_connection_status()
+    
+    # Build status message
+    if system_active and camera_connected:
+        status_msg = "System is active and camera is connected."
+        status_display = "ON - Connected"
+    elif system_active:
+        status_msg = "System is active but camera is disconnected."
+        status_display = "ON - Disconnected"
+    else:
+        status_msg = "System is paused."
+        status_display = "OFF"
+    
     return {
-        "status": "ON" if get_system_state() else "OFF",
-        "message": "System is active." if get_system_state() else "System is paused.",
+        "status": "ON" if system_active else "OFF",
+        "status_display": status_display,
+        "message": status_msg,
+        "camera_connected": camera_connected,
         "siren_state": "ON" if get_siren_state() else "OFF"
     }
 

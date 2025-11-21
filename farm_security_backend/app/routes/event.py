@@ -21,20 +21,27 @@ def get_db():
 @router.get("/alerts")
 async def get_alerts_compat(db: Session = Depends(get_db), limit: int = 100):
     """Compatibility endpoint: /alerts (frontend expects this)"""
-    events = db.query(DetectionEventDB).order_by(DetectionEventDB.timestamp.desc()).limit(limit).all()
-    # Convert to frontend format
-    alerts = []
-    for e in events:
-        alerts.append({
-            "id": e.id,
-            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-            "type": e.detection_type,
-            "device": e.device_id,
-            "siren": e.siren_activated,
-            "notified": e.notified,
-            "video": e.video_filename
-        })
-    return alerts
+    try:
+        events = db.query(DetectionEventDB).order_by(DetectionEventDB.timestamp.desc()).limit(limit).all()
+        # Convert to frontend format
+        alerts = []
+        for e in events:
+            alerts.append({
+                "id": e.id,
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                "type": e.detection_type,
+                "device": e.device_id,
+                "siren": e.siren_activated,
+                "notified": e.notified,
+                "video": e.video_filename,
+                "confidence": e.confidence if hasattr(e, 'confidence') else None
+            })
+        return alerts
+    except Exception as ex:
+        print(f"Error in /alerts endpoint: {ex}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 # Helper to convert DB model to Pydantic model
 def db_to_pydantic(db_event: DetectionEventDB) -> DetectionEvent:
@@ -105,3 +112,15 @@ def delete_detection_event(event_id: int, db: Session = Depends(get_db)):
     db.delete(event)
     db.commit()
     return {"status": "deleted", "id": event_id}
+
+# DELETE: Clear all detection events
+@router.delete("/events/clear", response_model=dict)
+def clear_all_events(db: Session = Depends(get_db)):
+    try:
+        count = db.query(DetectionEventDB).count()
+        db.query(DetectionEventDB).delete()
+        db.commit()
+        return {"status": "success", "message": f"Cleared {count} event(s)", "count": count}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to clear events: {str(e)}")

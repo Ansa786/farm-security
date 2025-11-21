@@ -45,8 +45,9 @@ def create_app(db_url=None):
     # import models after db is created to avoid circular imports
     with app.app_context():
         from app.models import event  # registers the model(s)
-        # optionally create tables in development
-        # db.create_all()
+        # Create all tables from models
+        db.create_all()
+        print("✅ Database tables created/verified")
 
     return app
 

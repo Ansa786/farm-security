@@ -2,31 +2,54 @@
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from pydantic import BaseModel
-from app import db
 
-# SQLAlchemy model used by the app (must provide fields used elsewhere)
-class DetectionEventDB(db.Model):
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import (
+    Column,
+    Integer,
+    DateTime,
+    String,
+    Boolean,
+    Float,
+    JSON,
+)
+
+from app.database import Base
+
+
+class DetectionEventDB(Base):
+    """
+    SQLAlchemy model for detection events.
+    Using the shared declarative Base ensures Base.metadata.create_all()
+    in app/__main__.py creates the table on startup (required for SQLite).
+    """
+
     __tablename__ = "detection_events"
 
-    id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    detection_type = db.Column(db.String(128), nullable=False)
-    device_id = db.Column(db.String(128), nullable=True)
-    siren_activated = db.Column(db.Boolean, default=False, nullable=False)
-    notified = db.Column(db.Boolean, default=False, nullable=False)
-    video_filename = db.Column(db.String(256), nullable=True)
-    confidence = db.Column(db.Float, nullable=True)
-    data = db.Column(db.JSON, nullable=True)
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    detection_type = Column(String(128), nullable=False)
+    device_id = Column(String(128), nullable=True)
+    siren_activated = Column(Boolean, default=False, nullable=False)
+    notified = Column(Boolean, default=False, nullable=False)
+    video_filename = Column(String(256), nullable=True)
+    confidence = Column(Float, nullable=True)
+    data = Column(JSON, nullable=True)
 
-    def __repr__(self):
+    def __repr__(self) -> str:  # pragma: no cover - simple debug helper
         return (
             f"<DetectionEventDB id={self.id} type={self.detection_type} "
             f"device={self.device_id} siren={self.siren_activated} ts={self.timestamp}>"
         )
 
-# Pydantic schema exposed as DetectionEvent for FastAPI / other imports
+
 class DetectionEvent(BaseModel):
+    """
+    Pydantic schema exposed via FastAPI (request/response bodies).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: Optional[int] = None
     timestamp: Optional[datetime] = None
     detection_type: str
@@ -36,7 +59,3 @@ class DetectionEvent(BaseModel):
     video_filename: Optional[str] = None
     confidence: Optional[float] = None
     data: Optional[Dict[str, Any]] = None
-
-    class Config:
-        orm_mode = True           # keep for Pydantic v1 compatibility
-        from_attributes = True    # Pydantic v2 key to avoid warning

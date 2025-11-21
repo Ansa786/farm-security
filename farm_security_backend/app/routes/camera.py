@@ -6,9 +6,13 @@ import time
 import threading
 import os
 import requests
+from dotenv import load_dotenv
+
+# Load .env file to ensure environment variables are available
+load_dotenv()
+
 from app.services.detection import detector, get_system_state, log_detection_event
 from app.services.siren_control import siren_controller
-from app.services.video_handler import video_handler
 from app.services.push_notification import send_onesignal_notification
 
 router = APIRouter(prefix="/camera", tags=["camera"])
@@ -16,8 +20,11 @@ router = APIRouter(prefix="/camera", tags=["camera"])
 # NOTE: Update this URL to match the actual IP of your ESP32-CAM
 # Prefer env override. Typical ESP32 stream path is http://<ip>:81/stream
 # If stream doesn't work, try http://<ip>/stream or check ESP32 serial output for actual port
-ESP32_CAM_STREAM_URL = os.getenv("ESP32_CAM_STREAM_URL", "http://192.168.43.77:81/stream")
-ESP32_CAM_SNAPSHOT_URL = os.getenv("ESP32_CAM_SNAPSHOT_URL", "http://192.168.43.77/capture")
+ESP32_CAM_STREAM_URLS = [u.strip() for u in os.getenv("ESP32_CAM_STREAM_URLS", "http://10.18.81.133:81/stream").split(",") if u.strip()]
+ESP32_CAM_SNAPSHOT_URL = os.getenv("ESP32_CAM_SNAPSHOT_URL", "http://10.18.81.133/capture")
+
+print(f"🎥 Camera URLs loaded: {ESP32_CAM_STREAM_URLS}")
+print(f"📸 Snapshot URL: {ESP32_CAM_SNAPSHOT_URL}")
 FRAME_SKIP = 3  # Run detection every 3 frames (to save CPU/GPU resources)
 
 # Global video capture (will be initialized in processing loop)
@@ -25,45 +32,111 @@ cap = None
 cap_lock = threading.Lock()
 latest_frame = None
 frame_lock = threading.Lock()
+camera_connected = False
+camera_connection_lock = threading.Lock()
 
 # Detection cooldown to prevent spam notifications
 last_detection_time = 0
-DETECTION_COOLDOWN = 30  # seconds between detections of the same type
+DETECTION_COOLDOWN = 10  # seconds between detections (any type)
 last_detection_type = None
 cooldown_lock = threading.Lock()
 
+def get_camera_connection_status():
+    """Get current camera connection status."""
+    with camera_connection_lock:
+        return camera_connected
+
+def set_camera_connection_status(status: bool):
+    """Set camera connection status."""
+    global camera_connected
+    with camera_connection_lock:
+        camera_connected = status
+
 def get_camera_capture():
-    """Get or create video capture object."""
+    """Get or create video capture object. Tries multiple URLs and backends."""
     global cap
     with cap_lock:
         if cap is None or not cap.isOpened():
-            # Try opening with FFMPEG backend and tune timeouts/buffer to avoid long blocking reads
-            try:
-                cap = cv2.VideoCapture(ESP32_CAM_STREAM_URL, cv2.CAP_FFMPEG)
-            except Exception:
-                cap = cv2.VideoCapture(ESP32_CAM_STREAM_URL)
+            # Try each URL in the list with different backends
+            for url in ESP32_CAM_STREAM_URLS:
+                # Try different OpenCV backends in order of preference
+                backends = [
+                    (cv2.CAP_ANY, "CAP_ANY"),
+                    (cv2.CAP_FFMPEG, "CAP_FFMPEG"),
+                    (cv2.CAP_DSHOW, "CAP_DSHOW"),
+                ]
+                
+                for backend, backend_name in backends:
+                    try:
+                        print(f"🔌 Attempting connection to {url} with {backend_name}...")
+                        cap = cv2.VideoCapture(url, backend)
+                        
+                        if not cap.isOpened():
+                            print(f"   ❌ {backend_name} failed to open")
+                            continue
+                        
+                        # Configure capture settings
+                        try:
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                            cap.set(cv2.CAP_PROP_FPS, 30)
+                        except Exception:
+                            pass
+                        
+                        # Set timeouts if supported
+                        try:
+                            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
+                            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+                        except Exception:
+                            pass
 
-            # Try to reduce buffering and set open/read timeouts if supported by OpenCV build
+                        # Verify by reading a test frame
+                        print(f"   📸 Testing frame read...")
+                        ret, test_frame = cap.read()
+                        if ret and test_frame is not None:
+                            print(f"   ✅ SUCCESS! Connected with {backend_name}")
+                            set_camera_connection_status(True)
+                            return cap
+                        else:
+                            print(f"   ❌ {backend_name} opened but cannot read frames")
+                            cap.release()
+                            cap = None
+                            
+                    except Exception as e:
+                        print(f"   ❌ {backend_name} exception: {e}")
+                        if cap:
+                            try:
+                                cap.release()
+                            except:
+                                pass
+                            cap = None
+                        continue
+            
+            # All attempts failed
+            print(f"⚠️  WARNING: Failed to connect to camera stream at any URL: {ESP32_CAM_STREAM_URLS}")
+            print(f"💡 TIP: Stream works in browser but not OpenCV. Try:")
+            print(f"   1. Check if ESP32 allows multiple connections")
+            print(f"   2. Close browser tab accessing the stream")
+            print(f"   3. Restart ESP32-CAM")
+            set_camera_connection_status(False)
+            return None
+        else:
+            # Verify the existing connection is still working
             try:
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                # Check if we can still read frames
+                if cap.isOpened():
+                    # Don't actually read here, just check if opened
+                    set_camera_connection_status(True)
+                    return cap
             except Exception:
-                pass
-            # Some OpenCV versions expose timeouts (milliseconds). Ignore if unsupported.
-            try:
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
-            except Exception:
-                pass
-            try:
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-            except Exception:
-                pass
-
-            if not cap.isOpened():
-                print(f"⚠️  WARNING: Failed to connect to camera stream at {ESP32_CAM_STREAM_URL}")
+                # Connection lost, release and return None
+                try:
+                    cap.release()
+                except:
+                    pass
+                cap = None
+                set_camera_connection_status(False)
                 return None
-            else:
-                print(f"🔌 Connected to camera stream at {ESP32_CAM_STREAM_URL} (buffer=1, timeouts=5s if supported)")
-        return cap
+    return cap
 
 def try_read_snapshot() -> np.ndarray | None:
     """
@@ -86,7 +159,9 @@ def video_processing_loop():
     global latest_frame, cap, last_detection_time, last_detection_type
     
     frame_count = 0
-    print(f"🎥 Video processing loop starting... (Stream URL: {ESP32_CAM_STREAM_URL} | Snapshot URL: {ESP32_CAM_SNAPSHOT_URL})")
+    consecutive_failures = 0
+    max_consecutive_failures = 3  # Reconnect after 3 consecutive failed reads
+    print(f"🎥 Video processing loop starting... (Stream URL: {ESP32_CAM_STREAM_URLS} | Snapshot URL: {ESP32_CAM_SNAPSHOT_URL})")
     
     while True:
         # Check system state
@@ -108,22 +183,37 @@ def video_processing_loop():
                 ret = True
         
         if not ret:
-            print("⚠️  Stream not available, attempting reconnect in 2s...")
-            with cap_lock:
-                if cap:
-                    cap.release()
-                cap = None
-            time.sleep(2)
+            consecutive_failures += 1
+            print(f"⚠️  Stream read failed ({consecutive_failures}/{max_consecutive_failures})")
+            set_camera_connection_status(False)
+            
+            # Force reconnection after 3 consecutive failures
+            if consecutive_failures >= max_consecutive_failures:
+                print("🔄 3 consecutive failures detected - forcing camera reconnection...")
+                with cap_lock:
+                    if cap:
+                        try:
+                            cap.release()
+                        except:
+                            pass
+                    cap = None
+                consecutive_failures = 0
+                time.sleep(1)  # Brief pause before reconnecting
+            else:
+                time.sleep(0.5)  # Short delay between retries
             continue
+        
+        # Reset failure counter on successful read
+        consecutive_failures = 0
 
         # Store latest frame for live feed
         with frame_lock:
             latest_frame = frame.copy()
-
-        # 1. Add frame to handler buffer (for pre-event footage)
-        video_handler.add_frame(frame)
         
-        # 2. Run detection every N frames
+        # Update connection status to True since we successfully read a frame
+        set_camera_connection_status(True)
+
+        # Run detection every N frames
         frame_count += 1
         if frame_count % FRAME_SKIP == 0:
             # --- CORE DETECTION CALL ---
@@ -156,25 +246,21 @@ def video_processing_loop():
                         last_detection_time = current_time
                         last_detection_type = detection_type
                     
-                    # A. Start recording (will only start if not already recording)
-                    video_handler.start_recording(detection_type)
-                    
-                    # B. Trigger Siren (AI-triggered)
+                    # A. Trigger Siren (AI-triggered)
                     siren_success = siren_controller.toggle_siren("ON")
                     
-                    # C. Send Notification
+                    # B. Send Notification
                     notification_success = send_onesignal_notification(
                         title="🚨 Intrusion Alert!",
-                        message="ALERT INTRUSION HAS BEEN DETECTED, requesting for immediate user action"
+                        message=f"ALERT! {detection_type.upper()} DETECTED in your farm. Immediate action required!"
                     )
                     
-                    # D. Log event to database
-                    video_filename = None  # Will be set by video_handler if recording succeeds
+                    # C. Log event to database (timestamp only, no video)
                     log_detection_event(
                         detection_type=detection_type,
                         siren_activated=siren_success,
                         notified=notification_success,
-                        video_filename=video_filename,
+                        video_filename=None,
                         confidence=confidence
                     )
                     
@@ -187,7 +273,7 @@ def video_processing_loop():
             
             frame_count = 0
         
-        time.sleep(0.033)  # ~30 FPS processing rate
+        time.sleep(0.016)  # ~60 FPS processing rate for smoother feed
     
     print("Video processing loop stopped.")
 
@@ -196,12 +282,12 @@ def generate_frames():
     while True:
         with frame_lock:
             if latest_frame is None:
-                time.sleep(0.1)
+                time.sleep(0.01)
                 continue
             frame = latest_frame.copy()
         
-        # Encode frame as JPEG
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        # Encode frame as JPEG with lower quality for faster streaming
+        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if not ret:
             continue
         
@@ -209,17 +295,20 @@ def generate_frames():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
         
-        time.sleep(0.033)  # ~30 FPS
+        time.sleep(0.016)  # ~60 FPS for smoother streaming
 
 @router.get("/status")
 async def get_stream_status():
     """Checks if the video stream is currently open."""
-    camera = get_camera_capture()
-    is_open = camera is not None and camera.isOpened()
+    with cap_lock:
+        cap_open = cap is not None and cap.isOpened()
+    connection_status = get_camera_connection_status()
+    final_status = "streaming" if (cap_open or connection_status) else "disconnected"
     return {
-        "status": "streaming" if is_open else "disconnected",
-        "url": ESP32_CAM_STREAM_URL,
-        "system_active": get_system_state()
+        "status": final_status,
+        "url": ESP32_CAM_STREAM_URLS[0] if ESP32_CAM_STREAM_URLS else "",
+        "system_active": get_system_state(),
+        "connected": connection_status
     }
 
 @router.get("/live_feed")

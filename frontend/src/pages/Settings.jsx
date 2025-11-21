@@ -83,7 +83,10 @@ export default function Settings() {
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-white/80">System Status:</span>
                     <span className={`font-medium ${systemStatus.status === 'ON' ? 'text-green-400' : 'text-red-400'}`}>
-                      {systemStatus.status}
+                      {systemStatus.status_display || systemStatus.status}
+                      {systemStatus.camera_connected && systemStatus.status === 'ON' && (
+                        <span className="ml-2 text-green-300">• Connected</span>
+                      )}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -129,6 +132,75 @@ export default function Settings() {
           </Card>
         </>
       )}
+
+      <Card title="Push Notifications">
+        <div className="grid gap-3 text-white">
+          <p className="text-sm text-white/80">
+            Enable push notifications to receive alerts when intrusions are detected.
+          </p>
+          <button 
+            onClick={async () => {
+              console.log('Enable Notifications clicked')
+              try {
+                if (!window.OneSignal) {
+                  alert('❌ OneSignal not loaded. Please refresh the page.')
+                  return
+                }
+                
+                console.log('Requesting permission...')
+                const permission = await window.OneSignal.Notifications.requestPermission()
+                console.log('Permission result:', permission)
+                
+                if (permission) {
+                  console.log('Getting player ID...')
+                  const playerId = await window.OneSignal.User.PushSubscription.id
+                  console.log('Player ID:', playerId)
+                  
+                  if (playerId) {
+                    alert(`✅ Subscribed! Your Player ID: ${playerId}\n\nYou will now receive intrusion alerts.`)
+                  } else {
+                    alert('⚠️ Permission granted but no Player ID yet. Try again in a moment.')
+                  }
+                } else {
+                  alert('❌ Notification permission denied. Please enable notifications in your browser settings.')
+                }
+              } catch (error) {
+                console.error('Notification error:', error)
+                alert('Error: ' + error.message)
+              }
+            }}
+            className="rounded-xl bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 px-4 py-2 text-white w-fit"
+          >
+            📱 Enable Notifications
+          </button>
+          <button 
+            onClick={async () => {
+              console.log('Check Status clicked')
+              try {
+                if (!window.OneSignal) {
+                  alert('❌ OneSignal not loaded. Please refresh the page.')
+                  return
+                }
+                
+                const playerId = await window.OneSignal.User.PushSubscription.id
+                console.log('Current Player ID:', playerId)
+                
+                if (playerId) {
+                  alert(`✅ You are subscribed!\n\nPlayer ID: ${playerId}`)
+                } else {
+                  alert('❌ Not subscribed. Click "Enable Notifications" above.')
+                }
+              } catch (error) {
+                console.error('Status check error:', error)
+                alert('Error: ' + error.message)
+              }
+            }}
+            className="rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2 text-white w-fit text-sm"
+          >
+            Check Subscription Status
+          </button>
+        </div>
+      </Card>
 
       <Card title="Test Controls">
         <div className="flex gap-3">

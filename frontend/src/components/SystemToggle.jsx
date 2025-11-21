@@ -42,6 +42,7 @@ export default function SystemToggle({ className = '' }) {
 
   const isEnabled = status?.status === 'ON' || enabled
   const sirenState = status?.siren_state
+  const cameraConnected = status?.camera_connected
 
   return (
     <div className={classNames('rounded-2xl border border-white/15 bg-white/10 p-4 flex items-center justify-between backdrop-blur-md', className)}>
@@ -51,7 +52,9 @@ export default function SystemToggle({ className = '' }) {
           <span className="text-sm font-medium">System</span>
           {status && (
             <span className="text-xs text-white/60">
-              {status.message || (isEnabled ? 'Active' : 'Paused')}
+              {status.status_display || status.message || (isEnabled ? 'Active' : 'Paused')}
+              {cameraConnected && isEnabled && <span className="text-green-300"> • Connected</span>}
+              {!cameraConnected && isEnabled && <span className="text-yellow-300"> • Camera Disconnected</span>}
               {sirenState && ` • Siren: ${sirenState}`}
             </span>
           )}

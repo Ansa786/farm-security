@@ -55,10 +55,17 @@ def send_onesignal_notification(
     Send a push notification via OneSignal.
     Returns True on success, False on failure.
     """
+    print(f"\n📱 Attempting to send notification...")
+    print(f"   Title: {title}")
+    print(f"   Message: {message}")
+    
     # If OneSignal not configured, skip and return False (or True if you prefer silent success)
     if not ONESIGNAL_APP_ID or not ONESIGNAL_API_KEY:
         print("⚠️  OneSignal not configured (ONESIGNAL_APP_ID/ONESIGNAL_API_KEY missing). Notification skipped.")
         return False
+
+    print(f"   App ID: {ONESIGNAL_APP_ID}")
+    print(f"   API Key: {ONESIGNAL_API_KEY[:20]}...")
 
     # OneSignal REST API Key format: "Basic <REST_API_KEY>"
     # The REST API Key from OneSignal dashboard should be used directly
@@ -82,9 +89,11 @@ def send_onesignal_notification(
         "contents": {"en": message},
     }
     if player_ids:
+        print(f"   Sending to specific players: {player_ids}")
         payload["include_player_ids"] = player_ids
     else:
         # If no player ids, send to all subscribers (use with caution)
+        print(f"   Sending to all subscribed users")
         payload["included_segments"] = ["Subscribed Users"]
 
     if data:
@@ -93,12 +102,16 @@ def send_onesignal_notification(
         payload["url"] = url
 
     try:
+        print(f"   Sending request to OneSignal...")
         resp = requests.post(ONESIGNAL_API_URL, json=payload, headers=headers, timeout=timeout)
+        print(f"   Response status: {resp.status_code}")
+        print(f"   Response body: {resp.text}")
+        
         if 200 <= resp.status_code < 300:
-            print(f"✅ OneSignal notification sent: {title}")
+            print(f"✅ OneSignal notification sent successfully!")
             return True
         else:
-            print(f"❌ OneSignal error: status={resp.status_code} body={resp.text}")
+            print(f"❌ OneSignal error: status={resp.status_code}")
             return False
     except requests.RequestException as e:
         print(f"❌ OneSignal request failed: {e}")
