@@ -1,5 +1,6 @@
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <WebServer.h>
 
 // ===================
 // Select camera model
@@ -13,8 +14,56 @@
 const char *ssid = "R";
 const char *password = "123456789";
 
+// Siren pin definition
+#define SIREN_PIN 2
+
+// Create web server instance
+WebServer server(80);
+
 void startCameraServer();
 void setupLedFlash(int pin);
+
+// Siren control functions
+void sirenOn() {
+  digitalWrite(SIREN_PIN, HIGH);
+  Serial.println("🔊 SIREN ACTIVATED via ESP32 (GPIO 2)");
+}
+
+void sirenOff() {
+  digitalWrite(SIREN_PIN, LOW);
+  Serial.println("🔇 SIREN DEACTIVATED via ESP32 (GPIO 2)");
+}
+
+// Web server handlers
+void handleSirenOn() {
+  sirenOn();
+  server.send(200, "text/plain", "Siren ON");
+}
+
+void handleSirenOff() {
+  sirenOff();
+  server.send(200, "text/plain", "Siren OFF");
+}
+
+void handleSirenStatus() {
+  int sirenState = digitalRead(SIREN_PIN);
+  String status = sirenState ? "ON" : "OFF";
+  server.send(200, "text/plain", "Siren: " + status);
+}
+
+// Setup siren web server
+void setupSirenServer() {
+  server.on("/siren/on", HTTP_GET, handleSirenOn);
+  server.on("/siren/off", HTTP_GET, handleSirenOff);
+  server.on("/siren/status", HTTP_GET, handleSirenStatus);
+  
+  server.begin();
+  Serial.println("Siren web server started");
+  Serial.println("Endpoints:");
+  Serial.println("  /siren/on - Turn siren ON");
+  Serial.println("  /siren/off - Turn siren OFF");
+  Serial.println("  /siren/status - Check siren status");
+}
 
 void setup() {
   Serial.begin(115200);
@@ -103,9 +152,9 @@ void setup() {
 #endif
 
   // Initialize Siren GPIO pin (GPIO 2 for AI Thinker)
-  pinMode(2, OUTPUT);
-  digitalWrite(2, LOW);
-  Serial.println("Siren GPIO initialized on pin 2");
+  pinMode(SIREN_PIN, OUTPUT);
+  digitalWrite(SIREN_PIN, LOW);
+  Serial.println("🔊 Siren GPIO initialized on pin 2");
 
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
@@ -118,6 +167,7 @@ void setup() {
   Serial.println("WiFi connected");
 
   startCameraServer();
+  setupSirenServer();  // Add siren web server
 
   Serial.print("Camera Ready! Use 'http://");
   Serial.print(WiFi.localIP());
@@ -125,6 +175,6 @@ void setup() {
 }
 
 void loop() {
-  // Do nothing. Everything is done in another task by the web server
+  server.handleClient();  // Handle siren web server requests
   delay(10000);
 }

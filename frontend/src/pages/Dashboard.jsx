@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom'
 import Card from '../components/Card.jsx'
 import SystemToggle from '../components/SystemToggle.jsx'
-import SirenToggle from '../components/SirenToggle.jsx'
 import { Play, Bell, Settings } from 'lucide-react'
 
 export default function Dashboard() {
@@ -34,7 +33,6 @@ export default function Dashboard() {
         </Card>
 
         <SystemToggle className="mt-4" />
-        <SirenToggle className="mt-4" />
       </div>
     </div>
   )

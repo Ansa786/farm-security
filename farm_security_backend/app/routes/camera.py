@@ -164,12 +164,7 @@ def video_processing_loop():
     print(f"🎥 Video processing loop starting... (Stream URL: {ESP32_CAM_STREAM_URLS} | Snapshot URL: {ESP32_CAM_SNAPSHOT_URL})")
     
     while True:
-        # Check system state
-        if not get_system_state():
-            time.sleep(1)
-            continue
-        
-        # Get camera capture
+        # Get camera capture (always, even if system is OFF - for live feed)
         camera = get_camera_capture()
         frame = None
         ret = False
@@ -213,9 +208,9 @@ def video_processing_loop():
         # Update connection status to True since we successfully read a frame
         set_camera_connection_status(True)
 
-        # Run detection every N frames
+        # Run detection every N frames (only if system is ON)
         frame_count += 1
-        if frame_count % FRAME_SKIP == 0:
+        if frame_count % FRAME_SKIP == 0 and get_system_state():
             # --- CORE DETECTION CALL ---
             # Run YOLO detection on the frame
             try:

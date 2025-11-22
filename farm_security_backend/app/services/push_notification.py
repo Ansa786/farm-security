@@ -6,7 +6,7 @@ from typing import Optional, Sequence, Dict, Any
 # Load environment variables from .env at project root
 load_dotenv()
 
-ONESIGNAL_API_URL = "https://onesignal.com/api/v1/notifications"
+ONESIGNAL_API_URL = "https://api.onesignal.com/notifications"
 ONESIGNAL_APP_ID = os.getenv("ONESIGNAL_APP_ID", "b6f2e79a-afa6-4b06-81db-86a6ed2053ba")  # Default from index.html
 ONESIGNAL_API_KEY = os.getenv("ONESIGNAL_API_KEY", "")  # Must be set in your .env file
 # Optional: comma-separated player ids or single id in env for testing
@@ -67,13 +67,13 @@ def send_onesignal_notification(
     print(f"   App ID: {ONESIGNAL_APP_ID}")
     print(f"   API Key: {ONESIGNAL_API_KEY[:20]}...")
 
-    # OneSignal REST API Key format: "Basic <REST_API_KEY>"
-    # The REST API Key from OneSignal dashboard should be used directly
-    # Note: Make sure ONESIGNAL_API_KEY in .env is your REST API Key (not App ID)
+    # OneSignal v2 API - use the REST API Key with proper format
+    # For os_v2_app_* keys, don't use "Basic" or "Bearer", just the key directly
     headers = {
         "Content-Type": "application/json; charset=utf-8",
-        "Authorization": f"Basic {ONESIGNAL_API_KEY}"
+        "Authorization": ONESIGNAL_API_KEY  # Use key directly without prefix
     }
+    print(f"   Using OneSignal v2 API")
 
     # build include_player_ids from env if caller didn't provide
     player_ids = None

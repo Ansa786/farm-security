@@ -58,6 +58,10 @@ def set_system_state(is_active: bool):
     
     if not is_active:
         print(f"*** SYSTEM DEACTIVATED for {TIME_OFF // 60} minutes ***")
+        # Turn off siren when system is deactivated
+        from app.services.siren_control import siren_controller
+        siren_controller.toggle_siren("OFF")
+        print("🔇 Siren turned OFF (system deactivated)")
         # Start the auto-reactivation timer
         Timer(TIME_OFF, auto_reactivate_system).start()
     else:
