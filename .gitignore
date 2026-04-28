@@ -1,7 +1,7 @@
 # Node and build folders
 node_modules/
-dist/
 build/
+# dist is committed intentionally for hosting
 
 # Environment / local settings
 .env
