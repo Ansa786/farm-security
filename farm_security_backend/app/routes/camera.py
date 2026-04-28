@@ -25,7 +25,7 @@ ESP32_CAM_SNAPSHOT_URL = os.getenv("ESP32_CAM_SNAPSHOT_URL", "http://10.18.81.13
 
 print(f"🎥 Camera URLs loaded: {ESP32_CAM_STREAM_URLS}")
 print(f"📸 Snapshot URL: {ESP32_CAM_SNAPSHOT_URL}")
-FRAME_SKIP = 3  # Run detection every 3 frames (to save CPU/GPU resources)
+FRAME_SKIP = 10  # Run detection every 10 frames (reduces false alarms)
 
 # Global video capture (will be initialized in processing loop)
 cap = None
@@ -37,9 +37,14 @@ camera_connection_lock = threading.Lock()
 
 # Detection cooldown to prevent spam notifications
 last_detection_time = 0
-DETECTION_COOLDOWN = 10  # seconds between detections (any type)
+DETECTION_COOLDOWN = 30  # seconds between detections (any type) - increased to reduce false alarms
 last_detection_type = None
 cooldown_lock = threading.Lock()
+
+# Require multiple consecutive detections to reduce false alarms
+consecutive_detections = {}  # {detection_type: count}
+REQUIRED_CONSECUTIVE_DETECTIONS = 3  # Must detect 3 times in a row before alerting
+detection_lock = threading.Lock()
 
 def get_camera_connection_status():
     """Get current camera connection status."""
@@ -224,6 +229,25 @@ def video_processing_loop():
                 confidence = detections[0].get('confidence', 0.0)
                 current_time = time.time()
                 
+                # Track consecutive detections to reduce false alarms
+                with detection_lock:
+                    if detection_type not in consecutive_detections:
+                        consecutive_detections[detection_type] = 0
+                    consecutive_detections[detection_type] += 1
+                    
+                    # Reset other detection types
+                    for key in list(consecutive_detections.keys()):
+                        if key != detection_type:
+                            consecutive_detections[key] = 0
+                    
+                    current_count = consecutive_detections[detection_type]
+                
+                print(f"👁️  Detection: {detection_type} (confidence: {confidence:.2f}) - Count: {current_count}/{REQUIRED_CONSECUTIVE_DETECTIONS}")
+                
+                # Only alert if we have enough consecutive detections
+                if current_count < REQUIRED_CONSECUTIVE_DETECTIONS:
+                    continue  # Need more consecutive detections
+                
                 # Check cooldown - prevent spam notifications for same detection type
                 with cooldown_lock:
                     should_alert = (last_detection_type != detection_type or 
@@ -231,9 +255,9 @@ def video_processing_loop():
                 
                 if not should_alert:
                     # Still in cooldown, skip notification but log detection
-                    print(f"👁️  Detection: {detection_type} (confidence: {confidence:.2f}) - Cooldown active")
+                    print(f"👁️  Detection confirmed but cooldown active")
                 else:
-                    # New detection or cooldown expired - trigger alert
+                    # Enough consecutive detections and cooldown expired - trigger alert
                     print(f"🚨 ALERT! Threat Detected: {detection_type} (confidence: {confidence:.2f}) at {time.strftime('%Y-%m-%d %H:%M:%S')}")
                     
                     # Update cooldown tracking

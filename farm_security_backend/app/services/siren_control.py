@@ -25,7 +25,9 @@ def trigger_siren(state: str) -> bool:
     
     try:
         # Send HTTP GET request to ESP32 siren endpoint
-        url = f"http://{ESP32_CAM_IP}/siren?state={state.upper()}"
+        # Use /siren/on or /siren/off endpoints as defined in Arduino code
+        endpoint = "on" if state.upper() == "ON" else "off"
+        url = f"http://{ESP32_CAM_IP}/siren/{endpoint}"
         
         try:
             response = requests.get(url, timeout=2)
